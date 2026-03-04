@@ -96,7 +96,7 @@ impl DescriptorPool<'_> {
                 .messages()
                 .find(|message| message.name() == message_name)
                 .ok_or_else(|| eyre!("Message named '{message_name}' was not found in file"))
-        } else if file_descriptor.messages().len() < 2 {
+        } else if file_descriptor.messages().len() <= 1 {
             file_descriptor
                 .messages()
                 .next()

@@ -1,8 +1,10 @@
+mod cli;
 mod descriptors;
 mod schema_registry;
 mod util;
 
 use std::borrow::Cow;
+use std::env;
 use std::ffi::CString;
 use std::io::{Cursor, Seek, SeekFrom};
 use std::time::Duration;
@@ -29,32 +31,10 @@ use serde::{Deserialize, Serialize};
 use tracing::error;
 use tracing::level_filters::LevelFilter;
 
+use crate::cli::{Args, Command};
 use crate::descriptors::DescriptorPool;
 use crate::schema_registry::{SchemaRegistryClient, SchemaVersionOrLatest};
 use crate::util::decode_varint;
-
-#[derive(clap::Parser)]
-struct Args {
-    #[clap(long)]
-    brokers: String,
-
-    #[clap(long)]
-    schema_registry: String,
-
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(clap::Subcommand)]
-enum Command {
-    Produce {
-        topic: String,
-        message: Option<String>,
-    },
-    Consume {
-        topic: String,
-    },
-}
 
 #[derive(Serialize, Deserialize)]
 struct Record {
@@ -71,8 +51,17 @@ fn main() -> eyre::Result<()> {
         .init();
 
     let args = Args::parse();
-    let brokers = args.brokers;
-    let schema_registry = args.schema_registry;
+
+    let Some(brokers) = args.brokers.or_else(|| env::var("KAFE_KAFKA_BROKERS").ok()) else {
+        bail!("No kafka brokers specified")
+    };
+
+    let Some(schema_registry) = args
+        .schema_registry
+        .or_else(|| env::var("KAFE_SCHEMA_REGISTRY").ok())
+    else {
+        bail!("No schema registry specified")
+    };
 
     let schema_registry = SchemaRegistryClient::new(format!("http://{schema_registry}"));
     let mut descriptor_pool = DescriptorPool::new(&schema_registry);
