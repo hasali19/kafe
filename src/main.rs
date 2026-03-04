@@ -120,55 +120,7 @@ fn main() -> eyre::Result<()> {
                 .set("enable.auto.commit", "false")
                 .create()?;
 
-            let partitions = unsafe {
-                let topic = CString::new(topic.as_str())?;
-                let mut topics = [topic.as_ptr()];
-                let topics = rd_kafka_TopicCollection_of_topic_names(topics.as_mut_ptr(), 1);
-                let queue = rd_kafka_queue_new(consumer.client().native_ptr());
-
-                rd_kafka_DescribeTopics(
-                    consumer.client().native_ptr(),
-                    topics,
-                    std::ptr::null(),
-                    queue,
-                );
-
-                rd_kafka_TopicCollection_destroy(topics);
-
-                let event = loop {
-                    let event = rd_kafka_queue_poll(queue, 1000);
-                    if rd_kafka_event_type(event) == RD_KAFKA_EVENT_DESCRIBETOPICS_RESULT {
-                        break event;
-                    }
-                    rd_kafka_event_destroy(event);
-                };
-
-                let result = rd_kafka_event_DescribeTopics_result(event);
-
-                let mut topic_descriptions_count = 0;
-                let topic_descriptions =
-                    rd_kafka_DescribeTopics_result_topics(result, &mut topic_descriptions_count);
-
-                assert!(topic_descriptions_count == 1);
-
-                let mut topic_partition_infos_count = 0;
-                let topic_partition_infos = rd_kafka_TopicDescription_partitions(
-                    *topic_descriptions,
-                    &mut topic_partition_infos_count,
-                );
-
-                let mut partitions = vec![];
-                for i in 0..topic_partition_infos_count {
-                    partitions.push(rd_kafka_TopicPartitionInfo_partition(
-                        *topic_partition_infos.add(i),
-                    ));
-                }
-
-                rd_kafka_event_destroy(event);
-                rd_kafka_queue_destroy(queue);
-
-                partitions
-            };
+            let partitions = consumer.partitions(&topic)?;
 
             let mut assignment = TopicPartitionList::new();
             for partition in partitions {
@@ -238,4 +190,61 @@ fn main() -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+trait KafkaConsumerExt<C: rdkafka::ClientContext>: Consumer {
+    fn partitions(&self, topic: &str) -> eyre::Result<Vec<i32>> {
+        let topic = CString::new(topic)?;
+        let mut topics = [topic.as_ptr()];
+        let topics = unsafe { rd_kafka_TopicCollection_of_topic_names(topics.as_mut_ptr(), 1) };
+        let queue = unsafe { rd_kafka_queue_new(self.client().native_ptr()) };
+
+        unsafe {
+            rd_kafka_DescribeTopics(self.client().native_ptr(), topics, std::ptr::null(), queue)
+        };
+
+        let event = loop {
+            let event = unsafe { rd_kafka_queue_poll(queue, 1000) };
+            if unsafe { rd_kafka_event_type(event) } == RD_KAFKA_EVENT_DESCRIBETOPICS_RESULT {
+                break event;
+            }
+            unsafe { rd_kafka_event_destroy(event) };
+        };
+
+        let result = unsafe { rd_kafka_event_DescribeTopics_result(event) };
+
+        let mut topic_descriptions_count = 0;
+        let topic_descriptions =
+            unsafe { rd_kafka_DescribeTopics_result_topics(result, &mut topic_descriptions_count) };
+
+        assert!(topic_descriptions_count == 1);
+
+        let mut topic_partition_infos_count = 0;
+        let topic_partition_infos = unsafe {
+            rd_kafka_TopicDescription_partitions(
+                *topic_descriptions,
+                &mut topic_partition_infos_count,
+            )
+        };
+
+        let mut partitions = vec![];
+        for i in 0..topic_partition_infos_count {
+            partitions.push(unsafe {
+                rd_kafka_TopicPartitionInfo_partition(*topic_partition_infos.add(i))
+            });
+        }
+
+        unsafe {
+            rd_kafka_TopicCollection_destroy(topics);
+            rd_kafka_event_destroy(event);
+            rd_kafka_queue_destroy(queue);
+        }
+
+        Ok(partitions)
+    }
+}
+
+impl<C: rdkafka::consumer::ConsumerContext> KafkaConsumerExt<C> for BaseConsumer<C> where
+    Self: Consumer
+{
 }
