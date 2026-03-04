@@ -22,6 +22,8 @@ pub struct Args {
 #[derive(clap::Subcommand)]
 pub enum Command {
     /// Produce records to a topic
+    ///
+    /// Records are read line by line from stdin, in json format.
     Produce {
         /// Name of the topic
         topic: String,
@@ -35,6 +37,8 @@ pub enum Command {
     },
 
     /// Consume records from a topic
+    ///
+    /// Records are written to stdout, in json format.
     Consume {
         /// Name of the topic
         topic: String,
