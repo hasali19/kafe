@@ -4,6 +4,7 @@ mod schema_registry;
 mod util;
 
 use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::env;
 use std::ffi::CString;
 use std::io::{Cursor, Seek, SeekFrom};
@@ -189,6 +190,73 @@ fn main() -> eyre::Result<()> {
 
                 println!("{record_json}")
             }
+        }
+        Command::Tombstone { topic } => {
+            let consumer: BaseConsumer = ClientConfig::new()
+                .set("bootstrap.servers", &brokers)
+                .set("group.id", "kafe")
+                .set("enable.auto.commit", "false")
+                .create()?;
+
+            let partitions = consumer.partitions(&topic)?;
+
+            let mut assignment = TopicPartitionList::new();
+            let mut end_offsets = BTreeMap::new();
+            for partition in partitions {
+                let (low_offset, high_offset) =
+                    consumer.fetch_watermarks(&topic, 0, Timeout::Never)?;
+
+                if low_offset < high_offset {
+                    end_offsets.insert(partition, high_offset);
+                    assignment.add_partition_offset(
+                        &topic,
+                        partition,
+                        rdkafka::Offset::Beginning,
+                    )?;
+                }
+            }
+
+            consumer.assign(&assignment)?;
+
+            let mut finished = BTreeSet::new();
+            let mut keys = HashSet::new();
+
+            while finished.len() < assignment.count() {
+                let Some(res) = consumer.poll(Timeout::Never) else {
+                    continue;
+                };
+
+                let msg = match res {
+                    Ok(res) => res,
+                    Err(e) => {
+                        error!("{e}");
+                        continue;
+                    }
+                };
+
+                if msg.offset() + 1 >= end_offsets[&msg.partition()] {
+                    finished.insert(msg.partition());
+                }
+
+                if let Some(key) = msg.key() {
+                    if msg.payload().is_some() {
+                        keys.insert(key.to_owned());
+                    } else {
+                        keys.remove(key);
+                    }
+                }
+            }
+
+            let producer: ThreadedProducer<DefaultProducerContext> = ClientConfig::new()
+                .set("bootstrap.servers", brokers)
+                .create()?;
+
+            for key in &keys {
+                let record: BaseRecord<'_, Vec<u8>, Vec<u8>> = BaseRecord::to(&topic).key(&key);
+                producer.send(record).unwrap();
+            }
+
+            println!("Tombstoned {} keys", keys.len());
         }
     }
 

@@ -43,6 +43,9 @@ pub enum Command {
         /// Name of the topic
         topic: String,
     },
+
+    /// Tombstone all keys on a topic
+    Tombstone { topic: String },
 }
 
 fn styles() -> clap::builder::Styles {
