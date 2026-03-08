@@ -28,8 +28,8 @@ use rdkafka::producer::{BaseRecord, DefaultProducerContext, Producer, ThreadedPr
 use rdkafka::util::Timeout;
 use rdkafka::{ClientConfig, Message as _, TopicPartitionList};
 use serde::{Deserialize, Serialize};
-use tracing::error;
 use tracing::level_filters::LevelFilter;
+use tracing::{debug, error};
 
 use crate::cli::{Args, Command};
 use crate::descriptors::DescriptorPool;
@@ -154,8 +154,11 @@ fn main() -> eyre::Result<()> {
 
                 // TODO: Use exact schema id
                 let _schema_id = cursor.read_u32::<BigEndian>()?;
+                let indices_count = decode_varint(&mut cursor)?;
 
-                if decode_varint(&mut cursor)? != 1 {
+                debug!("{indices_count} indices");
+
+                if indices_count != 1 {
                     bail!("Nested messages are not yet supported");
                 }
 
